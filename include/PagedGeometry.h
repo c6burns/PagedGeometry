@@ -760,7 +760,15 @@ public:
 	*/
 	Ogre::RenderQueueGroupID getRenderQueue() const;
 
+	inline void setImpostorCameraNode(Ogre::SceneNode* n) { mImpostorCameraNode = n; }
+	inline Ogre::SceneNode* getImpostorCameraNode() { return mImpostorCameraNode; }
+	inline void setImpostorRenderNode(Ogre::SceneNode* n) { mImpostorRenderNode = n; }
+	inline Ogre::SceneNode* getImpostorRenderNode() { return mImpostorRenderNode; }
+
 protected:
+
+	Ogre::SceneNode* mImpostorCameraNode;
+	Ogre::SceneNode* mImpostorRenderNode;
 	//Internal function - do not use
 	void _addDetailLevel(GeometryPageManager *mgr, Ogre::Real maxRange, Ogre::Real transitionLength);
 

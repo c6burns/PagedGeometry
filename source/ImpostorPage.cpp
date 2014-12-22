@@ -27,6 +27,15 @@ Permission is granted to anyone to use this software for any purpose, including 
 #include <OgreMaterial.h>
 #include <OgreTechnique.h>
 
+#include <OgreCompositorManager2.h>
+#include <OgreCompositorWorkspace.h>
+#include <OgreViewport.h>
+#include <OgreCompositorNode.h>
+#include <OgreCompositorNodeDef.h>
+#include "Compositor/Pass/OgreCompositorPass.h"
+#include "Compositor/Pass/PassClear/OgreCompositorPassClear.h"
+#include "Compositor/Pass/PassScene/OgreCompositorPassScene.h"
+
 using namespace Ogre;
 
 namespace Forests {
@@ -47,13 +56,16 @@ void ImpostorPage::init(PagedGeometry *geom, const Ogre::Any &data)
 	this->geom = geom;
 
 	//Init. variables
+
+
+
 	//setBlendMode(ALPHA_REJECT_IMPOSTOR);
 	setBlendMode(ALPHA_BLEND_IMPOSTOR);
 		
 	if (++selfInstances == 1){
 		//Set up a single instance of a scene node which will be used when rendering impostor textures
-		mRenderNode = geom->getSceneNode()->createChildSceneNode();
-		mCameraNode = geom->getSceneNode()->createChildSceneNode();
+		geom->setImpostorCameraNode(geom->getSceneNode()->createChildSceneNode());
+		geom->setImpostorRenderNode(geom->getSceneNode()->createChildSceneNode());
         ResourceGroupManager::getSingleton().createResourceGroup("Impostors");
 	}
 }
@@ -68,8 +80,8 @@ ImpostorPage::~ImpostorPage()
 	}
 
 	if (--selfInstances == 0){
-		sceneMgr->destroySceneNode(mRenderNode);
-		sceneMgr->destroySceneNode(mCameraNode);
+		sceneMgr->destroySceneNode(geom->getImpostorCameraNode());
+		sceneMgr->destroySceneNode(geom->getImpostorRenderNode());
         ResourceGroupManager::getSingleton().destroyResourceGroup("Impostors");
 	}
 }
@@ -487,21 +499,56 @@ void ImpostorTexture::renderTextures(bool force)
 	//renderTarget->setAutoUpdated(false);
 	
 	//Set up camera
-	camNode = group->mCameraNode;
+	camNode = group->getCameraNode();
 	renderCamera = sceneMgr->createCamera(getUniqueID("ImpostorCam"));
+	if (renderCamera->isAttached()) renderCamera->detachFromParent();
 	camNode->attachObject(renderCamera);
 	renderCamera->setLodBias(1000.0f);
+	renderCamera->_resetRenderedRqs(RENDER_QUEUE_MAX);
+	sceneMgr->updateSceneGraph();
 
 	Ogre::CompositorManager2* cm = Ogre::Root::getSingletonPtr()->getCompositorManager2();
+	if (!cm->hasWorkspaceDefinition("ScreenShawtz"))
+	{
+		CompositorNodeDef *nodeDef = cm->addNodeDefinition("AutoGenImpostorScreenShawtz1");
 
-	renderViewport = renderTarget->addViewport(renderCamera);
-	renderViewport->setOverlaysEnabled(false);
-	renderViewport->setClearEveryFrame(true);
-	renderViewport->setShadowsEnabled(false);
-	renderViewport->setBackgroundColour(ImpostorPage::impostorBackgroundColor);
+		//Input texture
+		nodeDef->addTextureSourceName("WindowRT", 0, TextureDefinitionBase::TEXTURE_INPUT);
+
+		nodeDef->setNumTargetPass(1);
+		{
+			CompositorTargetDef *targetDef = nodeDef->addTargetPass("WindowRT");
+			targetDef->setNumPasses((IMPOSTOR_YAW_ANGLES * IMPOSTOR_PITCH_ANGLES) + 1);
+			{
+				{
+					CompositorPassClearDef *passClear = static_cast<CompositorPassClearDef*>(targetDef->addPass(PASS_CLEAR));
+					passClear->mColourValue = ImpostorPage::impostorBackgroundColor;
+				}
+
+				const float xDivFactor = 1.0f / IMPOSTOR_YAW_ANGLES;
+				const float yDivFactor = 1.0f / IMPOSTOR_PITCH_ANGLES;
+				for (int o = 0; o < IMPOSTOR_PITCH_ANGLES; ++o) { //4 pitch angle renders
+					for (int i = 0; i < IMPOSTOR_YAW_ANGLES; ++i) { //8 yaw angle renders
+						CompositorPassSceneDef *passScene = static_cast<CompositorPassSceneDef*>(targetDef->addPass(PASS_SCENE));
+						passScene->mShadowNode = IdString();
+						passScene->mVpLeft = (float)(i)* xDivFactor;
+						passScene->mVpTop = (float)(o)* yDivFactor;
+						passScene->mVpWidth = xDivFactor;
+						passScene->mVpHeight = yDivFactor;
+						passScene->mIncludeOverlays = false;
+					}
+				}
+			}
+		}
+
+		CompositorWorkspaceDef *workDef = cm->addWorkspaceDefinition("ScreenShawtz");
+		workDef->connectOutput(nodeDef->getName(), 0);
+	}
+	Ogre::CompositorWorkspace* cws = cm->addWorkspace(sceneMgr, renderTarget, renderCamera, "ScreenShawtz", true);
+
 	
 	//Set up scene node
-	SceneNode* node = group->mRenderNode;
+	SceneNode* node = group->getRenderNode();
 	
 	Ogre::SceneNode* oldSceneNode = entity->getParentSceneNode();
 	if (oldSceneNode) {
@@ -569,8 +616,8 @@ void ImpostorTexture::renderTextures(bool force)
 	bool oldVisible = entity->getVisible();
 	entity->setVisible(true);
 	float oldMaxDistance = entity->getRenderingDistance();
-	entity->setRenderingDistance(0);
-
+	entity->setRenderingDistance(FLT_MAX);
+	
 	bool needsRegen = true;
 #ifdef IMPOSTOR_FILE_SAVE
 	//Calculate the filename hash used to uniquely identity this render
@@ -618,30 +665,10 @@ void ImpostorTexture::renderTextures(bool force)
     }
 #endif
 
-	if (needsRegen){
-		//If this has not been pre-rendered, do so now
-		const float xDivFactor = 1.0f / IMPOSTOR_YAW_ANGLES;
-		const float yDivFactor = 1.0f / IMPOSTOR_PITCH_ANGLES;
-		for (int o = 0; o < IMPOSTOR_PITCH_ANGLES; ++o){ //4 pitch angle renders
-#ifdef IMPOSTOR_RENDER_ABOVE_ONLY
-			Radian pitch = Degree((90.0f * o) * yDivFactor); //0, 22.5, 45, 67.5
-#else
-			Radian pitch = Degree((180.0f * o) * yDivFactor - 90.0f);
-#endif
-
-			for (int i = 0; i < IMPOSTOR_YAW_ANGLES; ++i){ //8 yaw angle renders
-				Radian yaw = Degree((360.0f * i) * xDivFactor); //0, 45, 90, 135, 180, 225, 270, 315
-					
-				//Position camera
-				camNode->setPosition(0, 0, 0);
-                camNode->setOrientation(Quaternion(yaw, Vector3::UNIT_Y) * Quaternion(-pitch, Vector3::UNIT_X));
-                camNode->translate(Vector3(0, 0, objDist), Node::TS_LOCAL);
-						
-				//Render the impostor
-				renderViewport->setDimensions((float)(i) * xDivFactor, (float)(o) * yDivFactor, xDivFactor, yDivFactor);
-				renderTarget->update();
-			}
-		}
+	if (needsRegen) {
+		ImpostorCompositorWorkspaceListener cwsl(renderCamera, objDist);
+		cws->setListener(&cwsl);
+		cws->_update();
 	
 #ifdef IMPOSTOR_FILE_SAVE
 		//Save RTT to file with respecting the temp dir
@@ -669,7 +696,7 @@ void ImpostorTexture::renderTextures(bool force)
 	sceneMgr->setFog(oldFogMode, oldFogColor, oldFogDensity, oldFogStart, oldFogEnd);
 
 	//Delete camera
-	renderTarget->removeViewport(0);
+	cm->removeWorkspace(cws);
 	renderCamera->getSceneManager()->destroyCamera(renderCamera);
 	
 	//Delete scene node

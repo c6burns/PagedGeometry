@@ -22,6 +22,9 @@ Permission is granted to anyone to use this software for any purpose, including 
 #include <OgrePrerequisites.h>
 #include <OgreTextureManager.h>
 #include <OgreRenderTexture.h>
+#include <OgreViewport.h>
+#include <OgreCompositorWorkspaceListener.h>
+#include <Pass/OgreCompositorPass.h>
 
 #if OGRE_PLATFORM == OGRE_PLATFORM_LINUX
 // linux memory fix
@@ -45,6 +48,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 //in memory and need to be regenerated each time the application is run (remove or comment out the line below if this
 //is desired)
 #define IMPOSTOR_FILE_SAVE
+
 
 namespace Forests {
 
@@ -187,8 +191,8 @@ public:
 	inline void setBlendMode(ImpostorBlendMode blendMode) { this->blendMode = blendMode; }
 	inline ImpostorBlendMode getBlendMode() { return blendMode; }
 
-	Ogre::SceneNode* mRenderNode;
-	Ogre::SceneNode* mCameraNode;
+	inline Ogre::SceneNode* getRenderNode() { return geom->getImpostorRenderNode(); }
+	inline Ogre::SceneNode* getCameraNode() { return geom->getImpostorCameraNode(); }
 
 protected:
 	Ogre::SceneManager *sceneMgr;
@@ -369,5 +373,45 @@ void ImpostorBatch::addBillboard(const Ogre::Vector3 &position, const Ogre::Quat
 							texCoordIndx);
 }
 }
+
+
+
+class ImpostorCompositorWorkspaceListener : public Ogre::CompositorWorkspaceListener
+{
+public:
+	ImpostorCompositorWorkspaceListener(Ogre::Camera* cam, Ogre::Real objDist)
+		: xDivFactor(1.0f / IMPOSTOR_YAW_ANGLES)
+		, yDivFactor(1.0f / IMPOSTOR_PITCH_ANGLES)
+		, mCamera(cam)
+		, mObjDist(objDist)
+	{
+	}
+	void workspacePreUpdate(void) {}
+	void passPreExecute(Ogre::CompositorPass *pass)
+	{
+		if (pass->getType() != Ogre::CompositorPassType::PASS_CLEAR) {
+			int i = pass->getDefinition()->mVpLeft / xDivFactor;
+			int o = pass->getDefinition()->mVpTop / yDivFactor;
+			Ogre::SceneNode* camNode = mCamera->getParentSceneNode();
+
+#ifdef IMPOSTOR_RENDER_ABOVE_ONLY
+			Ogre::Radian pitch = Ogre::Degree((90.0f * o) * yDivFactor);
+#else
+			Ogre::Radian pitch = Ogre::Degree((180.0f * o) * yDivFactor - 90.0f);
+#endif
+			Ogre::Radian yaw = Ogre::Degree((360.0f * i) * xDivFactor);
+
+			camNode->setPosition(0, 0, 0);
+			camNode->setOrientation(Ogre::Quaternion(yaw, Ogre::Vector3::UNIT_Y) * Ogre::Quaternion(-pitch, Ogre::Vector3::UNIT_X));
+			camNode->translate(Ogre::Vector3(0, 0, mObjDist), Ogre::Node::TS_LOCAL);
+			mCamera->getSceneManager()->updateAllTransforms();
+		}
+	}
+
+	Ogre::Camera* mCamera;
+	Ogre::Real mObjDist;
+	const float xDivFactor;
+	const float yDivFactor;
+};
 
 #endif
