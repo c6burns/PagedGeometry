@@ -633,7 +633,8 @@ void StaticBillboardSet::build()
 		billboardBuffer.clear();
 		
 		//Create an entity for the mesh
-		entity = sceneMgr->createEntity(entityName, mesh->getName());
+		entity = sceneMgr->createEntity(mesh->getName());
+		entity->setName(entityName);
 		entity->setCastShadows(false);
 
 		//Apply texture

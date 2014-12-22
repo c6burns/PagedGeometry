@@ -180,7 +180,8 @@ void GrassLoader::loadPage(PageInfo &page)
             assert(mesh);
 
             //Add the mesh to PagedGeometry
-            Entity *entity = geom->getCamera()->getSceneManager()->createEntity(getUniqueID(), mesh->getName());
+            Entity *entity = geom->getCamera()->getSceneManager()->createEntity(mesh->getName());
+			entity->setName(getUniqueID());
             entity->setRenderQueueGroup(renderQueue);
             entity->setCastShadows(false);
             entity->setVisibilityFlags(mVisibilityFlags);
